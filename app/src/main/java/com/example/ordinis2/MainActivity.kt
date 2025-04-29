@@ -1,14 +1,13 @@
 package com.example.ordinis2
 
 
+import android.app.Application
 import android.os.Bundle
 import com.example.ordinis2.data.Task
 import com.example.ordinis2.data.WorkPlan
 import com.example.ordinis2.data.WorkSummary
-import android.provider.Settings.Global.getString
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -27,7 +25,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -62,12 +59,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ordinis2.data.local.AppDatabase
+import com.example.ordinis2.ui.screens.LoginScreen
+import com.example.ordinis2.ui.screens.RegisterScreen
+import com.example.ordinis2.viewmodel.LoginViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -76,21 +78,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import okhttp3.*
-import java.util.*
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.*
-
 
 
 class MainActivity : ComponentActivity() {
@@ -100,8 +95,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
+            val application = LocalContext.current.applicationContext as Application // In your Composable
+            val userDao = AppDatabase.getDatabase(application).userDao()
+            val viewModelFactory = LoginViewModel.LoginViewModelFactory(userDao)
+            val loginViewModel: LoginViewModel = viewModel(factory = viewModelFactory)
             Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                OrdinisApp(activityScope = activityScope)
+                OrdinisApp(loginViewModel=loginViewModel, activityScope = activityScope)
             }
         }
     }
@@ -120,16 +119,20 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun OrdinisApp(
     workPlanViewModel: WorkPlanViewModel = WorkPlanViewModel(apiKey = stringResource(R.string.openai_api_key)),
-    activityScope: CoroutineScope
+    activityScope: CoroutineScope,
+    loginViewModel: LoginViewModel
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
-    var currentScreen by rememberSaveable { mutableStateOf("welcome") }
+    var currentScreen by rememberSaveable { mutableStateOf("") } // Start with an empty screen
     var generatedWorkPlan by rememberSaveable { mutableStateOf<WorkPlan?>(null) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var isLoggedIn by rememberSaveable { mutableStateOf(false) } // Track login state
+    var showRegisterScreen by rememberSaveable { mutableStateOf(false) } // Track registration screen
 
     val workPlanState = workPlanViewModel.workPlanState.collectAsState()
     val errorState = workPlanViewModel.errorMessage.collectAsState()
     val isLoading by workPlanViewModel.isLoading.collectAsState()
+    val loginResult by loginViewModel.loginResult.collectAsState() // Observe login result for navigation
 
     // Update generatedWorkPlan when new work plan is available
     LaunchedEffect(workPlanState.value) {
@@ -139,6 +142,39 @@ fun OrdinisApp(
     // Update errorMessage when a new error appears
     LaunchedEffect(errorState.value) {
         errorMessage = errorState.value
+    }
+
+    // Navigate to main app if login is successful
+    LaunchedEffect(loginResult) {
+        if (loginResult == "Login successful") {
+            isLoggedIn = true
+            currentScreen = "welcome" // Go to the main app screen
+            loginViewModel.clearLoginResult() // Clear the login result
+        } else if (loginResult?.startsWith("Registration successful") == true) {
+            showRegisterScreen = false
+            currentScreen = "login" // Go back to login after successful registration
+            loginViewModel.clearLoginResult()
+        }
+    }
+
+    // Determine which screen to show
+    if (!isLoggedIn) {
+        if (showRegisterScreen) {
+            RegisterScreen(
+                onRegisterSuccess = { username, password ->
+                    loginViewModel.register(username, password)
+                },
+                onLoginClick = { showRegisterScreen = false }
+            )
+        } else {
+            LoginScreen(
+                onLoginSuccess = { username, password ->
+                    loginViewModel.login(username, password)
+                },
+                onRegisterClick = { showRegisterScreen = true },
+            )
+        }
+        return
     }
 
     Scaffold(
@@ -225,10 +261,15 @@ fun OrdinisApp(
                                         deadline = deadline
                                     )
                                     workPlanViewModel.generateWorkPlan(workSummary)
+
+                                    // Wait until generatedWorkPlan is non-null
+                                    while (workPlanViewModel.workPlanState.value == null && !workPlanViewModel.errorMessage.value.isNullOrEmpty()) {
+                                        delay(100)
+                                    }
+
                                     currentScreen = "displayPlan"
                                 }
                             },
-                            generatedWorkPlan = generatedWorkPlan,
                             isLoading = isLoading,
                             errorMessage = errorMessage,
                             snackbarHostState = snackbarHostState
@@ -236,13 +277,25 @@ fun OrdinisApp(
                     }
                 }
                 "displayPlan" -> {
-                    if (isLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(48.dp)) // Show a loading spinner
-                    } else {
-                        generatedWorkPlan?.let { plan ->
+                    val plan = workPlanState.value
+                    val error = errorState.value
+
+                    when {
+                        isLoading -> {
+                            CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                        }
+                        error != null -> {
+                            Text(
+                                text = error,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        plan != null -> {
                             WorkPlanScreen(workPlan = plan)
-                        } ?: run {
-                            Text("No work plan generated yet.")
+                        }
+                        else -> {
+                            Text("No work plan generated yet. Please fill out the form.")
                         }
                     }
                 }
@@ -260,11 +313,6 @@ fun OrdinisApp(
         }
     }
 }
-
-
-
-
-
 
 // Welcome screen
 @Composable
@@ -306,7 +354,6 @@ fun WorkPlanInputForm(
     deadline: Date?,
     onDeadlineChange: (Date?) -> Unit,
     onGenerateWorkPlan: () -> Unit,
-    generatedWorkPlan: WorkPlan?,
     isLoading: Boolean,
     errorMessage: String?,
     snackbarHostState: SnackbarHostState
@@ -536,7 +583,7 @@ class WorkPlanViewModel(private val apiKey: String) : ViewModel() {
         val request = Request.Builder()
             .url("https://api.openai.com/v1/chat/completions")
             .header("Authorization", "Bearer $apiKey")
-            .post(RequestBody.create("application/json".toMediaTypeOrNull(), requestBody.toString()))
+            .post(RequestBody.run { create("application/json".toMediaTypeOrNull(), requestBody.toString()) })
             .build()
 
         try {
@@ -647,7 +694,8 @@ fun WorkPlanScreen(workPlan: WorkPlan) {
 fun DefaultPreview() {
     val apiKey = stringResource(R.string.openai_api_key)
     val workPlanViewModel = WorkPlanViewModel(apiKey)
+    val loginViewModel: LoginViewModel = viewModel()
     Surface {
-        OrdinisApp(workPlanViewModel = workPlanViewModel, activityScope = rememberCoroutineScope())
+        OrdinisApp(workPlanViewModel = workPlanViewModel,loginViewModel=loginViewModel,activityScope = rememberCoroutineScope())
     }
 }
