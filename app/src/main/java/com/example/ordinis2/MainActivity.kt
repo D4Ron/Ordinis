@@ -3,7 +3,6 @@ package com.example.ordinis2
 
 import android.app.Application
 import android.os.Bundle
-import com.example.ordinis2.data.Task
 import com.example.ordinis2.data.WorkPlan
 import com.example.ordinis2.data.WorkSummary
 import androidx.activity.ComponentActivity
@@ -11,16 +10,10 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
@@ -40,7 +33,6 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SelectableDates
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -60,40 +52,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ordinis2.data.local.AppDatabase
 import com.example.ordinis2.domain.OpenAiWorkPlanRepository
 import com.example.ordinis2.ui.screens.LoginScreen
 import com.example.ordinis2.ui.screens.RegisterScreen
 import com.example.ordinis2.ui.screens.WelcomeScreen
+import com.example.ordinis2.ui.screens.WorkPlanInputForm
 import com.example.ordinis2.ui.screens.WorkPlanScreen
 import com.example.ordinis2.viewmodel.LoginViewModel
 import com.example.ordinis2.viewmodel.WorkPlanViewModel
 import dagger.hilt.android.AndroidEntryPoint
-import dagger.hilt.android.lifecycle.HiltViewModel
-import jakarta.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import okhttp3.*
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import org.json.JSONArray
-import org.json.JSONObject
 
 
 @AndroidEntryPoint
@@ -116,18 +95,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        activityScope.cancel() // Cancel the CoroutineScope when the Activity is destroyed
+        activityScope.cancel()
     }
 }
 
 
 
-// Main App Composable
+// Main App Composable and UI handler
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OrdinisApp(
-    workPlanViewModel: WorkPlanViewModel, // Use Hilt's hiltViewModel() to inject the ViewModel
+    workPlanViewModel: WorkPlanViewModel, //TODO: look into hiltviewModel to initialize this directly with it
     activityScope: CoroutineScope,
     loginViewModel: LoginViewModel
 ) {
@@ -338,130 +317,6 @@ fun OrdinisApp(
     }
 }
 
-
-// Welcome screen
-
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun WorkPlanInputForm(
-    projectTitle: String,
-    onProjectTitleChange: (String) -> Unit,
-    projectDescription: String,
-    onProjectDescriptionChange: (String) -> Unit,
-    desiredPlanType: String,
-    onPlanTypeChange: (String) -> Unit,
-    userRole: String,
-    onUserRoleChange: (String) -> Unit,
-    projectStartDate: Date,
-    onProjectStartDateChange: (Date) -> Unit,
-    deadline: Date?,
-    onDeadlineChange: (Date?) -> Unit,
-    onGenerateWorkPlan: () -> Unit,
-    isLoading: Boolean,
-    errorMessage: String?,
-    snackbarHostState: SnackbarHostState
-) {
-    val scrollState = rememberScrollState()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        OutlinedTextField(
-            value = projectTitle,
-            onValueChange = onProjectTitleChange,
-            label = { Text("Project Title") },
-            placeholder = { Text("What are you working on?") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Next)
-        )
-
-        PlanTypeDropdown(
-            selectedPlanType = desiredPlanType,
-            onPlanTypeChange = onPlanTypeChange
-        )
-
-        OutlinedTextField(
-            value = userRole,
-            onValueChange = onUserRoleChange,
-            label = { Text("Your Role") },
-            placeholder = { Text("Teacher, Student, etc...") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Next)
-        )
-
-        OutlinedTextField(
-            value = projectDescription,
-            onValueChange = onProjectDescriptionChange,
-            label = { Text("Project Description") },
-            placeholder = { Text("Describe your project...") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(120.dp),
-            keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Done),
-            singleLine = false,
-            maxLines = 10
-        )
-
-        Text(text = "Start Date & Deadline", style = MaterialTheme.typography.titleSmall)
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            DateSelector(
-                label = "Start Date",
-                selectedDate = projectStartDate,
-                onDateChange = onProjectStartDateChange,
-                modifier = Modifier.weight(1f)
-            )
-            DateSelector(
-                label = "Deadline",
-                selectedDate = deadline ?: Date(),
-                onDateChange = onDeadlineChange,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Button(
-            onClick = onGenerateWorkPlan,
-            enabled = !isLoading,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-        ) {
-            if (isLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .padding(4.dp),
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    strokeWidth = 2.dp
-                )
-            } else {
-                Text("Generate Work Plan")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-    }
-
-    errorMessage?.let {
-        LaunchedEffect(it) {
-            snackbarHostState.showSnackbar(it)
-        }
-    }
-}
-
-
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlanTypeDropdown(
     selectedPlanType: String,
@@ -552,14 +407,6 @@ fun DateSelector(
     }
 }
 
-
-
-
-
-// Displays the work plan
-
-
-// Preview Composable
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
