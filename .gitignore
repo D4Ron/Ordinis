@@ -14,3 +14,4 @@
 .cxx
 local.properties
 secrets.xml
+app/src/main/assets/secrets.properties

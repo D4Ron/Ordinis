@@ -65,11 +65,19 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ordinis2.data.local.AppDatabase
+import com.example.ordinis2.domain.OpenAiWorkPlanRepository
 import com.example.ordinis2.ui.screens.LoginScreen
 import com.example.ordinis2.ui.screens.RegisterScreen
+import com.example.ordinis2.ui.screens.WelcomeScreen
+import com.example.ordinis2.ui.screens.WorkPlanScreen
 import com.example.ordinis2.viewmodel.LoginViewModel
+import com.example.ordinis2.viewmodel.WorkPlanViewModel
+import dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.android.lifecycle.HiltViewModel
+import jakarta.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -88,6 +96,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     private val activityScope = CoroutineScope(Dispatchers.Main)
@@ -95,12 +104,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            val application = LocalContext.current.applicationContext as Application // In your Composable
+            val application = LocalContext.current.applicationContext as Application
             val userDao = AppDatabase.getDatabase(application).userDao()
             val viewModelFactory = LoginViewModel.LoginViewModelFactory(userDao)
             val loginViewModel: LoginViewModel = viewModel(factory = viewModelFactory)
             Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                OrdinisApp(loginViewModel=loginViewModel, activityScope = activityScope)
+                OrdinisApp(workPlanViewModel = WorkPlanViewModel(OpenAiWorkPlanRepository(apiKey = "nothing to see here")),loginViewModel=loginViewModel, activityScope = activityScope)
             }
         }
     }
@@ -118,60 +127,64 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OrdinisApp(
-    workPlanViewModel: WorkPlanViewModel = WorkPlanViewModel(apiKey = stringResource(R.string.openai_api_key)),
+    workPlanViewModel: WorkPlanViewModel, // Use Hilt's hiltViewModel() to inject the ViewModel
     activityScope: CoroutineScope,
     loginViewModel: LoginViewModel
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
-    var currentScreen by rememberSaveable { mutableStateOf("") } // Start with an empty screen
+    var currentScreen by rememberSaveable { mutableStateOf("welcome") } // Start with welcome screen
     var generatedWorkPlan by rememberSaveable { mutableStateOf<WorkPlan?>(null) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    var isLoggedIn by rememberSaveable { mutableStateOf(false) } // Track login state
-    var showRegisterScreen by rememberSaveable { mutableStateOf(false) } // Track registration screen
+    var isLoggedIn by rememberSaveable { mutableStateOf(false) }
+    var showRegisterScreen by rememberSaveable { mutableStateOf(false) }
 
     val workPlanState = workPlanViewModel.workPlanState.collectAsState()
     val errorState = workPlanViewModel.errorMessage.collectAsState()
     val isLoading by workPlanViewModel.isLoading.collectAsState()
-    val loginResult by loginViewModel.loginResult.collectAsState() // Observe login result for navigation
+    val loginResult by loginViewModel.loginResult.collectAsState()
 
-    // Update generatedWorkPlan when new work plan is available
+    // Handle login result and navigate accordingly
+    LaunchedEffect(loginResult) {
+        when {
+            loginResult == "Login successful" -> {
+                isLoggedIn = true
+                currentScreen = "welcome"
+                loginViewModel.clearLoginResult()
+            }
+
+            loginResult?.startsWith("Registration successful") == true -> {
+                showRegisterScreen = false
+                currentScreen = "login"
+                loginViewModel.clearLoginResult()
+            }
+        }
+    }
+
+    // Handle state updates when new work plan or error is available
     LaunchedEffect(workPlanState.value) {
         generatedWorkPlan = workPlanState.value
     }
 
-    // Update errorMessage when a new error appears
     LaunchedEffect(errorState.value) {
         errorMessage = errorState.value
     }
 
-    // Navigate to main app if login is successful
-    LaunchedEffect(loginResult) {
-        if (loginResult == "Login successful") {
-            isLoggedIn = true
-            currentScreen = "welcome" // Go to the main app screen
-            loginViewModel.clearLoginResult() // Clear the login result
-        } else if (loginResult?.startsWith("Registration successful") == true) {
-            showRegisterScreen = false
-            currentScreen = "login" // Go back to login after successful registration
-            loginViewModel.clearLoginResult()
-        }
-    }
-
-    // Determine which screen to show
+    // Navigation Logic for Screens
     if (!isLoggedIn) {
         if (showRegisterScreen) {
             RegisterScreen(
                 onRegisterSuccess = { username, password ->
-                    loginViewModel.register(username, password)
+                    loginViewModel.register(
+                        username,
+                        password
+                    )
                 },
                 onLoginClick = { showRegisterScreen = false }
             )
         } else {
             LoginScreen(
-                onLoginSuccess = { username, password ->
-                    loginViewModel.login(username, password)
-                },
-                onRegisterClick = { showRegisterScreen = true },
+                onLoginSuccess = { username, password -> loginViewModel.login(username, password) },
+                onRegisterClick = { showRegisterScreen = true }
             )
         }
         return
@@ -206,7 +219,12 @@ fun OrdinisApp(
                 NavigationBarItem(
                     selected = currentScreen == "displayPlan",
                     onClick = { currentScreen = "displayPlan" },
-                    icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "View WorkPlan") },
+                    icon = {
+                        Icon(
+                            Icons.AutoMirrored.Filled.List,
+                            contentDescription = "View WorkPlan"
+                        )
+                    },
                     label = { Text("View Plan") }
                 )
             }
@@ -223,6 +241,7 @@ fun OrdinisApp(
                 "welcome" -> {
                     WelcomeScreen(onAddProjectButtonClicked = { currentScreen = "inputForm" })
                 }
+
                 "inputForm" -> {
                     Column(
                         modifier = Modifier
@@ -262,8 +281,11 @@ fun OrdinisApp(
                                     )
                                     workPlanViewModel.generateWorkPlan(workSummary)
 
-                                    // Wait until generatedWorkPlan is non-null
-                                    while (workPlanViewModel.workPlanState.value == null && !workPlanViewModel.errorMessage.value.isNullOrEmpty()) {
+                                    // Wait until either work plan or error message is available
+                                    while (
+                                        workPlanViewModel.workPlanState.value == null &&
+                                        workPlanViewModel.errorMessage.value == null
+                                    ) {
                                         delay(100)
                                     }
 
@@ -276,6 +298,7 @@ fun OrdinisApp(
                         )
                     }
                 }
+
                 "displayPlan" -> {
                     val plan = workPlanState.value
                     val error = errorState.value
@@ -284,6 +307,7 @@ fun OrdinisApp(
                         isLoading -> {
                             CircularProgressIndicator(modifier = Modifier.size(48.dp))
                         }
+
                         error != null -> {
                             Text(
                                 text = error,
@@ -291,14 +315,17 @@ fun OrdinisApp(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
+
                         plan != null -> {
                             WorkPlanScreen(workPlan = plan)
                         }
+
                         else -> {
                             Text("No work plan generated yet. Please fill out the form.")
                         }
                     }
                 }
+
                 else -> {
                     Text("Unknown screen")
                 }
@@ -307,36 +334,13 @@ fun OrdinisApp(
     }
 
     LaunchedEffect(errorMessage) {
-        errorMessage?.let {
-            snackbarHostState.showSnackbar(message = it, duration = SnackbarDuration.Short)
-            errorMessage = null
-        }
+        errorMessage?.let {}
     }
 }
 
+
 // Welcome screen
-@Composable
-fun WelcomeScreen(onAddProjectButtonClicked: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Welcome to Ordinis",
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
-        Text(
-            text = "Click the button below to add a new project to monitor.",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(bottom = 32.dp)
-        )
-        Button(onClick = onAddProjectButtonClicked) {
-            Text("Add a New Project to Monitor")
-        }
-    }
-}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -548,152 +552,19 @@ fun DateSelector(
     }
 }
 
-// ViewModel to manage UI state and interact with the OpenAI API
-class WorkPlanViewModel(private val apiKey: String) : ViewModel() {
-
-    private val _workPlanState = MutableStateFlow<WorkPlan?>(null)
-    val workPlanState: StateFlow<WorkPlan?> = _workPlanState.asStateFlow()
-
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-
-    private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
-
-    private val client = OkHttpClient()
-    private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-
-    suspend fun generateWorkPlan(workSummary: WorkSummary) {
-        _isLoading.value = true
-        _errorMessage.value = null
-        _workPlanState.value = null
-
-        val prompt = buildPrompt(workSummary)
-
-        val requestBody = JSONObject().apply {
-            put("model", "gpt-3.5-turbo")
-            put("messages", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("role", "user")
-                    put("content", prompt)
-                })
-            })
-        }
-
-        val request = Request.Builder()
-            .url("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", "Bearer $apiKey")
-            .post(RequestBody.run { create("application/json".toMediaTypeOrNull(), requestBody.toString()) })
-            .build()
-
-        try {
-            val response = withContext(Dispatchers.IO) {
-                client.newCall(request).execute()
-            }
-
-            _isLoading.value = false
-            if (response.isSuccessful) {
-                response.body?.string()?.let { responseBody ->
-                    val json = JSONObject(responseBody)
-                    val content = json
-                        .getJSONArray("choices")
-                        .getJSONObject(0)
-                        .getJSONObject("message")
-                        .getString("content")
-                    val extractedPlan = extractWorkPlan(content, workSummary.desiredPlanType)
-                    _workPlanState.value = extractedPlan
-                } ?: run {
-                    _errorMessage.value = "Empty response from OpenAI"
-                }
-            } else {
-                _errorMessage.value = "OpenAI Error: ${response.code}"
-            }
-        } catch (e: Exception) {
-            _isLoading.value = false
-            _errorMessage.value = e.message ?: "Network error"
-        }
-    }
 
 
-    private fun buildPrompt(summary: WorkSummary): String {
-        return """
-            You are an expert project planner. Based on the following project details, generate a detailed step-by-step work plan. Each task should include a description and estimated duration in days.
-
-            Project Title: ${summary.projectTitle}
-            Description: ${summary.projectDescription}
-            Role: ${summary.userRole}
-            Start Date: ${dateFormat.format(summary.projectStartDate)}
-            Deadline: ${summary.deadline?.let { dateFormat.format(it) } ?: "Not provided"}
-            Plan Type: ${summary.desiredPlanType}
-
-            Format:
-            Task 1: [Task Description] - [Duration in days]
-            Task 2: ...
-        """.trimIndent()
-    }
-
-    private fun extractWorkPlan(workPlanString: String, planType: String): WorkPlan {
-        val tasks = mutableListOf<List<Task>>()
-        val lines = workPlanString.lines()
-
-        var i = 0
-        while (i < lines.size) {
-            if (lines[i].startsWith("Task")) {
-                val taskList = mutableListOf<Task>()
-                while (i < lines.size && lines[i].startsWith("Task")) {
-                    val parts = lines[i].split(":")
-                    if (parts.size > 1) {
-                        val descriptionDuration = parts[1].split("-")
-                        val description = descriptionDuration.getOrNull(0)?.trim() ?: ""
-                        val daysText = descriptionDuration.getOrNull(1)?.replace("days", "")?.replace("day", "")?.trim()
-                        val days = daysText?.toIntOrNull() ?: 1
-                        val deadline = Date(Date().time + days * 86400000L)
-                        val estimatedHours = days * 8
-                        taskList.add(Task(description, deadline, estimatedHours))
-                    }
-                    i++
-                }
-                tasks.add(taskList)
-            } else {
-                i++
-            }
-        }
-        return WorkPlan(workPlanType = planType, tasks = tasks)
-    }
-}
 
 
 // Displays the work plan
-@Composable
-fun WorkPlanScreen(workPlan: WorkPlan) {
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(text = "Work Plan", style = MaterialTheme.typography.headlineSmall)
-        Text(text = "Plan Type: ${workPlan.workPlanType}", style = MaterialTheme.typography.bodyLarge)
-
-        workPlan.tasks.forEachIndexed { index, taskList ->
-            Text(text = "Period ${index + 1}", style = MaterialTheme.typography.bodySmall)
-            taskList.forEach { task ->
-                Text(text = "Task: ${task.taskDescription}, Deadline: ${task.taskDeadline?.let {
-                    SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(it)
-                } ?: "Not Set"}, Estimated Hours: ${task.taskEstimatedHours ?: "Not Set"}")
-            }
-        }
-    }
-}
 
 // Preview Composable
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
-    val apiKey = stringResource(R.string.openai_api_key)
-    val workPlanViewModel = WorkPlanViewModel(apiKey)
+    val apiKey = "nothing to see here"
+    val workPlanViewModel = WorkPlanViewModel(OpenAiWorkPlanRepository(apiKey))
     val loginViewModel: LoginViewModel = viewModel()
     Surface {
         OrdinisApp(workPlanViewModel = workPlanViewModel,loginViewModel=loginViewModel,activityScope = rememberCoroutineScope())

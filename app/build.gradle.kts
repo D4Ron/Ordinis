@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     kotlin("kapt")
     id("com.google.devtools.ksp")
+    id("dagger.hilt.android.plugin")
 }
 
 
@@ -46,9 +47,12 @@ android {
         compose = true
     }
 }
-
+//You have no idea how much pain was felt here
 dependencies {
 
+    ksp(libs.dagger.compiler.v2511)
+    implementation(libs.hilt)
+    ksp(libs.hilt.android.compiler)
     implementation(libs.okhttp)
     implementation(libs.json)
     implementation(libs.kotlinx.coroutines.core)
@@ -62,11 +66,11 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    implementation(libs.androidx.room.runtime)  // Use the latest version
-    implementation(libs.androidx.room.ktx)// Kotlin Extensions
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
     implementation(libs.jbcrypt)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    kapt("androidx.room:room-compiler:2.7.1") // Compiler
+    kapt("androidx.room:room-compiler:2.7.1")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
