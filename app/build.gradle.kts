@@ -70,6 +70,8 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.jbcrypt)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    implementation(libs.gson)
     kapt("androidx.room:room-compiler:2.7.1")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

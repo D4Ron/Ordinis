@@ -13,14 +13,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun WelcomeScreen(onAddProjectButtonClicked: () -> Unit) {
+fun WelcomeScreen(username: String?,onAddProjectButtonClicked: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "Welcome to Ordinis",
+            text = username?.let { "Welcome to Ordinis, $it!" } ?: "Welcome to Ordinis",
             style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.padding(bottom = 16.dp)
         )

@@ -21,7 +21,7 @@ data class WorkSummary(
     val projectTitle: String,
     val projectDescription: String,
     val desiredPlanType: String,
-    val userRole: String = "Project Manager",
+    val userRole: String,
     val projectStartDate: Date = Date(),
     val deadline: Date?
 )

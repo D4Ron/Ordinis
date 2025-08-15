@@ -4,11 +4,16 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverters // Import TypeConverters
 
-@Database(entities = [User::class], version = 1, exportSchema = false)
+// Add WorkPlanEntity to the entities array
+// Add WorkPlanTypeConverters::class to @TypeConverters
+@Database(entities = [User::class, WorkPlanEntity::class], version = 2, exportSchema = false) // Increment version
+@TypeConverters(WorkPlanTypeConverters::class) // Add your new type converters
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun userDao(): UserDao
+    abstract fun workPlanDao(): WorkPlanDao // Add abstract fun for the new DAO
 
     companion object {
         @Volatile
@@ -20,7 +25,10 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "app_database"
-                ).build()
+                )
+
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }
